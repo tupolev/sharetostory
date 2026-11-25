@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "sharetostory",
+  "version": "1.0.0",
+  "description": "Comparte publicaciones del feed de Instagram en tus historias.",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.instagram.com/*"
+      ],
+      "js": [
+        "content/inject.js"
+      ],
+      "css": [
+        "content/styles.css"
+      ],
+      "run_at": "document_end",
+      "world": "MAIN"
+    }
+  ],
+  "minimum_chrome_version": "120"
+}
