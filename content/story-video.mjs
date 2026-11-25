@@ -18,8 +18,9 @@ export function getStoryFrameRate(sourceRate) {
   );
 }
 
-export async function prepareStoryVideo(blob) {
+export async function prepareStoryVideo(blob, audioBlob) {
   const input = new Input({ source: new BlobSource(blob), formats: [MP4] });
+  const audioInput = audioBlob && new Input({ source: new BlobSource(audioBlob), formats: [MP4] });
   try {
     const videoTrack = await input.getPrimaryVideoTrack();
     if (!videoTrack) throw new Error('No se encontró una pista de vídeo en el MP4.');
@@ -41,6 +42,7 @@ export async function prepareStoryVideo(blob) {
     const conversion = await Conversion.init({
       input,
       output,
+      ...(audioInput && { audio: { discard: true }, composable: true }),
       video: {
         codec,
         bitrate,
@@ -58,13 +60,33 @@ export async function prepareStoryVideo(blob) {
         }
       }
     });
-    if (!conversion.isValid || conversion.discardedTracks.some(({ track }) => track.type === 'audio')) {
+    if (!conversion.isValid || (!audioInput && conversion.discardedTracks.some(({ track }) => track.type === 'audio'))) {
       throw new Error('Chrome no pudo preparar el MP4 con las pistas del vídeo original.');
     }
-    await conversion.execute();
+    if (audioInput) {
+      if (!await audioInput.getPrimaryAudioTrack()) throw new Error('Instagram devolvió una pista de audio vacía.');
+      const audioConversion = await Conversion.init({
+        input: audioInput,
+        output,
+        video: { discard: true },
+        composable: true
+      });
+      if (!audioConversion.isValid) throw new Error('Chrome no pudo incorporar la pista de audio.');
+      await output.start();
+      try {
+        await Promise.all([conversion.execute(), audioConversion.execute()]);
+        await output.finalize();
+      } catch (error) {
+        await output.cancel();
+        throw error;
+      }
+    } else {
+      await conversion.execute();
+    }
     if (!target.buffer?.byteLength || !cover) throw new Error('Chrome generó un vídeo vacío.');
     return { media: new Blob([target.buffer], { type: 'video/mp4' }), width, height, duration, cover, frameRate };
   } finally {
+    audioInput?.dispose();
     input.dispose();
   }
 }

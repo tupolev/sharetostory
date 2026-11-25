@@ -4,14 +4,14 @@ chrome.runtime.onMessage.addListener((request, sender, respond) => {
   if (request?.type !== 'SHARETOSTORY_PREVIEW_REQUEST' ||
       sender.origin !== 'https://www.instagram.com' || !sender.tab) return;
 
-  loadStoryMedia(request.url, request.video === true).then(
+  loadStoryMedia(request.url, request.video === true, request.audio === true).then(
     data => respond({ data }),
     error => respond({ error: error.message })
   );
   return true;
 });
 
-async function loadStoryMedia(source, video) {
+async function loadStoryMedia(source, video, audio) {
   const url = new URL(source);
   if (url.protocol !== 'https:' || url.username || url.password || url.port ||
       !/(^|\.)(cdninstagram\.com|fbcdn\.net)$/.test(url.hostname)) {
@@ -21,12 +21,14 @@ async function loadStoryMedia(source, video) {
   const response = await fetch(url, {
     credentials: 'omit',
     redirect: 'error',
-    signal: AbortSignal.timeout(video ? 25000 : 10000)
+    signal: AbortSignal.timeout(video || audio ? 25000 : 10000)
   });
   const type = response.headers.get('Content-Type') || '';
-  if (video) {
-    if (!response.ok || response.status !== 200 || !/^(video\/mp4|application\/octet-stream)(?:;|$)/i.test(type)) {
-      throw new Error('No se pudo descargar el vídeo MP4 completo.');
+  if (video || audio) {
+    const format = audio ? /^(audio\/mp4|video\/mp4|application\/octet-stream)(?:;|$)/i
+      : /^(video\/mp4|application\/octet-stream)(?:;|$)/i;
+    if (!response.ok || response.status !== 200 || !format.test(type)) {
+      throw new Error(audio ? 'No se pudo descargar la pista de audio.' : 'No se pudo descargar el vídeo MP4 completo.');
     }
     return encodeMedia(await readVideo(response));
   }
