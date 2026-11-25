@@ -3,13 +3,22 @@
 
 let isUploading = false;
 
+function getPostPermalink(pathname) {
+  const match = pathname.match(/^\/(?:[\w.]+\/)?(p|reels?|tv)\/([A-Za-z0-9_-]{1,11})\/?$/);
+  if (!match) return null;
+  const [, route, shortcode] = match;
+  const type = route === 'reels' ? 'reel' : route;
+  return { url: `${location.origin}/${type}/${shortcode}/`, shortcode, type };
+}
+
 function getFeedPostLink(article) {
-  const links = Array.from(article.querySelectorAll('a[href]')).filter(link =>
-    link.origin === location.origin && /^\/(?:p|reel|tv)\/[A-Za-z0-9_-]{1,11}\/?$/.test(link.pathname)
-  );
-  const timestampLink = links.find(link => link.querySelector('time'));
-  if (timestampLink) return timestampLink;
-  return new Set(links.map(link => link.pathname.replace(/\/$/, ''))).size === 1 ? links[0] : null;
+  const links = Array.from(article.querySelectorAll('a[href]'))
+    .filter(link => link.origin === location.origin)
+    .map(link => ({ link, post: getPostPermalink(link.pathname) }))
+    .filter(({ post }) => post);
+  const timestampLink = links.find(({ link }) => link.querySelector('time'));
+  if (timestampLink) return timestampLink.post;
+  return new Set(links.map(({ post }) => post.shortcode)).size === 1 ? links[0].post : null;
 }
 
 function getPostMediaId(shortcode) {
@@ -21,72 +30,189 @@ function getPostMediaId(shortcode) {
   return id.toString();
 }
 
-function addFeedStoryButtons() {
-  for (const article of document.querySelectorAll('main article')) {
-    if (article.querySelector('.sharetostory-share-story')) continue;
-    if (!getFeedPostLink(article)) continue;
+function getShareIcons(container) {
+  const selector = 'svg[aria-label], svg:has(title), button[aria-label] svg, [role="button"][aria-label] svg';
+  return Array.from(container.querySelectorAll(selector)).filter(icon => {
+    const control = icon.closest('button, [role="button"]');
+    const label = icon.getAttribute('aria-label') || icon.querySelector('title')?.textContent ||
+      control?.getAttribute('aria-label') || '';
+    return /^(?:share(?: (?:this )?(?:post|reel))?|compartir(?: (?:esta publicación|publicación|(?:este )?reel))?)$/i.test(label.trim());
+  });
+}
 
-    const shareIcon = Array.from(article.querySelectorAll('svg[aria-label], svg:has(title)')).find(icon => {
-      const label = icon.getAttribute('aria-label') || icon.querySelector('title')?.textContent || '';
-      return /^(?:share(?: post)?|compartir(?: publicación)?)$/i.test(label.trim());
+function getShareItem(icon, container, isDetail) {
+  const control = icon.closest('button, [role="button"]') || icon;
+  let item = control;
+  while (item.parentElement && container.contains(item.parentElement)) {
+    const row = item.parentElement;
+    const style = getComputedStyle(row);
+    if (style.display.includes('flex') && (isDetail || style.flexDirection.startsWith('row')) &&
+        Array.from(row.children).some(sibling =>
+          sibling !== item && sibling.querySelector('button svg, [role="button"] svg, svg[aria-label]')
+        )) return item;
+    if (row === container) break;
+    item = row;
+  }
+  // Reel detail layouts can stack the actions in a dedicated vertical rail.
+  return isDetail ? control : null;
+}
+
+function insertStoryButton(shareIcon, container, getSelection, isDetail = false) {
+  const shareItem = getShareItem(shareIcon, container, isDetail);
+  if (!shareItem) return null;
+
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'sharetostory-share-story';
+  button.setAttribute('aria-label', 'Compartir en mis stories');
+  button.title = 'Compartir en mis stories';
+  const icon = shareIcon.cloneNode(true);
+  icon.removeAttribute('aria-label');
+  icon.setAttribute('aria-hidden', 'true');
+  icon.querySelector('title')?.remove();
+  button.appendChild(icon);
+  button.addEventListener('click', event => {
+    event.stopPropagation();
+    const selection = getSelection();
+    if (!selection) {
+      alert('No se pudo identificar la publicación original.');
+      return;
+    }
+    const { post, mediaContainer } = selection;
+    const bounds = mediaContainer.getBoundingClientRect();
+    const video = Array.from(mediaContainer.querySelectorAll('video')).find(element =>
+      getVisibleMediaArea(element, bounds) > 0
+    );
+    openStoryModal(post.url, getPostMediaId(post.shortcode), {
+      previewUrl: getPostPreviewUrl(mediaContainer),
+      isVideo: Boolean(video) || post.type !== 'p',
+      videoUrl: video?.currentSrc || video?.src
     });
+  });
+  shareItem.before(button);
+  return button;
+}
+
+function getDetailShareTarget() {
+  const viewport = { left: 0, top: 0, right: innerWidth, bottom: innerHeight };
+  const dialogs = Array.from(document.querySelectorAll('[role="dialog"]')).reverse();
+  const page = document.querySelector('main, [role="main"]') || document.body;
+  for (const root of [...dialogs, page]) {
+    let best = null;
+    for (const icon of getShareIcons(root)) {
+      const rect = icon.getBoundingClientRect();
+      if (!rect.width || !rect.height || rect.bottom <= 0 || rect.right <= 0 ||
+          rect.top >= viewport.bottom || rect.left >= viewport.right ||
+          getComputedStyle(icon).visibility !== 'visible') continue;
+
+      let mediaContainer = icon.parentElement;
+      let area = 0;
+      // Use the closest common container of the share control and the displayed media.
+      while (mediaContainer && root.contains(mediaContainer)) {
+        for (const media of mediaContainer.querySelectorAll('img, video')) {
+          area = Math.max(area, getVisibleMediaArea(media, viewport));
+        }
+        if (area || mediaContainer === root) break;
+        mediaContainer = mediaContainer.parentElement;
+      }
+      if (mediaContainer && (!best || area > best.area)) best = { icon, root, mediaContainer, area };
+    }
+    if (best) return best;
+  }
+  return null;
+}
+
+let detailButton;
+let detailIcon;
+const feedButtons = new WeakMap();
+
+function addStoryButtons() {
+  if (getPostPermalink(location.pathname)) {
+    const target = getDetailShareTarget();
+    if (detailButton?.isConnected && target?.icon === detailIcon) return;
+    detailButton?.remove();
+    detailIcon = target?.icon;
+    if (target) feedButtons.get(target.icon)?.remove();
+    detailButton = target && insertStoryButton(target.icon, target.root, () => {
+      const post = getPostPermalink(location.pathname);
+      const current = getDetailShareTarget();
+      return post && current?.icon === target.icon ? { post, mediaContainer: current.mediaContainer } : null;
+    }, true);
+    return;
+  }
+
+  detailButton?.remove();
+  detailButton = null;
+  detailIcon = null;
+  for (const article of document.querySelectorAll('main article, [role="main"] article')) {
+    if (article.querySelector('.sharetostory-share-story') || !getFeedPostLink(article)) continue;
+    const shareIcon = getShareIcons(article)[0];
     if (!shareIcon) continue;
-
-    // Find the action row, which can contain the share count as a separate item.
-    let shareItem = shareIcon.closest('button, [role="button"]') || shareIcon;
-    while (shareItem.parentElement && shareItem.parentElement !== article) {
-      const row = shareItem.parentElement;
-      const style = getComputedStyle(row);
-      if (style.display.includes('flex') && style.flexDirection.startsWith('row') &&
-          Array.from(row.children).some(item =>
-            item !== shareItem && item.querySelector('button svg, [role="button"] svg, svg[aria-label]')
-          )) {
-        break;
-      }
-      shareItem = row;
-    }
-    if (shareItem.parentElement === article || !shareItem.parentElement) continue;
-
-    let insertionPoint = shareItem;
-    let next = shareItem.nextSibling;
-    while (next && !next.textContent.trim() && next.nodeType !== Node.ELEMENT_NODE) {
-      next = next.nextSibling;
-    }
-    const shareCount = /^\d[\d\s.,\u202f]*(?:mil(?:l?\.)?|[kmb])?$/i;
-    if (next && !next.matches?.('button, [role="button"], svg') &&
-        !next.querySelector?.('button, [role="button"], svg') &&
-        shareCount.test(next.textContent.trim())) {
-      insertionPoint = next;
-    }
-
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'sharetostory-share-story';
-    button.setAttribute('aria-label', 'Compartir en mis stories');
-    button.title = 'Compartir en mis stories';
-    const icon = shareIcon.cloneNode(true);
-    icon.removeAttribute('aria-label');
-    icon.setAttribute('aria-hidden', 'true');
-    icon.querySelector('title')?.remove();
-    button.appendChild(icon);
-    button.addEventListener('click', event => {
-      event.stopPropagation();
-      const link = getFeedPostLink(article);
-      if (!link) {
-        alert('No se pudo identificar la publicación original.');
-        return;
-      }
-      const shortcode = link.pathname.split('/')[2];
-      openFeedStoryModal(link.origin + link.pathname, getPostMediaId(shortcode));
+    const button = insertStoryButton(shareIcon, article, () => {
+      const post = getFeedPostLink(article);
+      return post && { post, mediaContainer: article };
     });
-    insertionPoint.after(button);
+    if (button) feedButtons.set(shareIcon, button);
   }
 }
 
-function openFeedStoryModal(url, mediaId) {
+function getVisibleMediaArea(media, container) {
+  if (getComputedStyle(media).visibility !== 'visible') return 0;
+  const rect = media.getBoundingClientRect();
+  const width = Math.min(rect.right, container.right) - Math.max(rect.left, container.left);
+  const height = Math.min(rect.bottom, container.bottom) - Math.max(rect.top, container.top);
+  return width >= 120 && height >= 120 ? width * height : 0;
+}
+
+function getPostPreviewUrl(article) {
+  const articleRect = article.getBoundingClientRect();
+  let best = { area: 0, url: '' };
+  for (const media of article.querySelectorAll('img, video[poster]')) {
+    const url = media.tagName === 'VIDEO' ? media.poster : media.currentSrc || media.src;
+    if (!url || !/^https:\/\//i.test(url)) continue;
+
+    const area = getVisibleMediaArea(media, articleRect);
+    if (area > best.area) best = { area, url };
+  }
+  return best.url;
+}
+
+function requestMedia(request, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const id = crypto.randomUUID();
+    const timeout = setTimeout(() => {
+      window.removeEventListener('message', receive);
+      reject(new Error('La preparación del contenido tardó demasiado.'));
+    }, timeoutMs);
+    function receive(event) {
+      if (event.source !== window || event.origin !== location.origin ||
+          event.data?.type !== 'SHARETOSTORY_PREVIEW_RESPONSE' || event.data.id !== id) return;
+
+      clearTimeout(timeout);
+      window.removeEventListener('message', receive);
+      const result = event.data.result;
+      if (!result || result.error) {
+        reject(new Error(result?.error || 'No se pudo preparar el contenido.'));
+        return;
+      }
+      resolve(result);
+    }
+    window.addEventListener('message', receive);
+    window.postMessage({ ...request, id }, location.origin);
+  });
+}
+
+async function loadStoryMedia(url, video = false) {
+  const result = await requestMedia({ type: 'SHARETOSTORY_PREVIEW_REQUEST', url, video }, video ? 35000 : 15000);
+  if (typeof result.data !== 'string') throw new Error('No se pudo cargar el contenido original.');
+  const bytes = Uint8Array.from(atob(result.data), char => char.charCodeAt(0));
+  return new Blob([bytes], { type: video ? 'video/mp4' : 'image/jpeg' });
+}
+
+function openStoryModal(url, mediaId, { previewUrl, isVideo, videoUrl }) {
   if (isUploading) return;
 
-  document.getElementById('sharetostory-modal')?.remove();
+  document.querySelector('#sharetostory-modal .sharetostory-close-btn')?.click();
   const modal = document.createElement('div');
   modal.id = 'sharetostory-modal';
   modal.className = 'sharetostory-modal';
@@ -97,7 +223,10 @@ function openFeedStoryModal(url, mediaId) {
         <button type="button" class="sharetostory-close-btn" aria-label="Cerrar">&times;</button>
       </div>
       <div class="sharetostory-modal-body">
-        <a class="sharetostory-reshare-source" target="_blank" rel="noopener noreferrer">Ver publicación original</a>
+        <div class="sharetostory-reshare-links">
+          <a class="sharetostory-reshare-source" target="_blank" rel="noopener noreferrer">Ver publicación original</a>
+          <a class="sharetostory-reshare-source sharetostory-upload-preview" target="_blank" rel="noopener noreferrer" hidden>Ver MP4 subido</a>
+        </div>
         <p role="status"></p>
         <div class="sharetostory-actions">
           <button type="button" class="sharetostory-btn-primary">Publicar historia</button>
@@ -109,29 +238,65 @@ function openFeedStoryModal(url, mediaId) {
   const publish = modal.querySelector('.sharetostory-btn-primary');
   const close = modal.querySelector('.sharetostory-close-btn');
   const status = modal.querySelector('[role="status"]');
-  close.addEventListener('click', () => modal.remove());
+  const uploadPreview = modal.querySelector('.sharetostory-upload-preview');
+  let previewObjectUrl;
+  let published = false;
+  let sessionInterrupted = false;
+  const progress = message => { status.textContent = message; };
+  const closeModal = () => {
+    if (previewObjectUrl) URL.revokeObjectURL(previewObjectUrl);
+    modal.remove();
+  };
+  close.addEventListener('click', closeModal);
   publish.addEventListener('click', async () => {
-    if (isUploading) return;
+    if (isUploading || publish.disabled) return;
+    if (published) {
+      closeModal();
+      return;
+    }
     isUploading = true;
     publish.disabled = true;
     close.disabled = true;
-    status.textContent = 'Publicando historia…';
+    progress(isVideo ? 'Descargando el vídeo original…' : 'Preparando la imagen…');
     try {
-      const canvas = document.createElement('canvas');
-      canvas.width = 1080;
-      canvas.height = 1920;
-      const context = canvas.getContext('2d');
-      context.fillStyle = '#17171c';
-      context.fillRect(0, 0, canvas.width, canvas.height);
-      const background = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.9));
-      if (!background) throw new Error('No se pudo preparar el fondo de la historia.');
-      await InstagramAPI.publishReshare(mediaId, background, canvas.width, canvas.height);
-      status.textContent = 'Instagram aceptó la historia. Ábrela para comprobar la publicación adjunta.';
+      let story;
+      if (isVideo) {
+        const video = await InstagramAPI.loadPostVideo(mediaId, videoUrl);
+        progress('Ajustando el vídeo a la historia fotograma a fotograma…');
+        const details = await requestMedia({ type: 'SHARETOSTORY_ENCODE_REQUEST', video }, 300000);
+        if (!(details.media instanceof Blob) || !(details.cover instanceof Blob)) {
+          throw new Error('El vídeo preparado no es válido.');
+        }
+        if (previewObjectUrl) URL.revokeObjectURL(previewObjectUrl);
+        previewObjectUrl = URL.createObjectURL(details.media);
+        uploadPreview.href = previewObjectUrl;
+        uploadPreview.hidden = false;
+        story = await InstagramAPI.publishReshare(mediaId, details.media, progress, details);
+      } else {
+        if (!previewUrl) throw new Error('Instagram no muestra una imagen para esta publicación.');
+        const image = await loadStoryMedia(previewUrl);
+        story = await InstagramAPI.publishReshare(mediaId, image, progress);
+      }
+      published = true;
+      publish.textContent = 'Cerrar ventana';
+      progress('Historia publicada.');
+      const username = story.user?.username || story.owner?.username;
+      const id = typeof story.id === 'string' ? story.id.split('_')[0] : story.pk;
+      if (/^[\w.]+$/.test(username || '') && typeof id === 'string' && /^\d+$/.test(id)) {
+        const link = document.createElement('a');
+        link.className = 'sharetostory-reshare-source';
+        link.href = `https://www.instagram.com/stories/${username}/${id}/`;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.textContent = 'Ver historia';
+        status.append(' ', link);
+      }
     } catch (error) {
+      sessionInterrupted = error.sessionInterrupted === true;
       status.textContent = 'No se pudo publicar la historia. ' + error.message;
-      publish.disabled = false;
     } finally {
       isUploading = false;
+      publish.disabled = sessionInterrupted;
       close.disabled = false;
     }
   });
@@ -237,34 +402,6 @@ const InstagramAPI = {
     return null;
   },
 
-  getFBDestinationId() {
-    // Try to extract Facebook destination ID from page data
-    try {
-      // Check localStorage for cached FB ID
-      const fbDestId = localStorage.getItem('fb_destination_id');
-      if (fbDestId) {
-        return fbDestId;
-      }
-
-      // Try to find in inline scripts
-      const scripts = document.querySelectorAll('script');
-      for (const script of scripts) {
-        const content = script.textContent || '';
-        // Look for fb_destination_id pattern
-        const match = content.match(/["|']fb_destination_id["|']:\s*["|']([^"']+)["|']/);
-        if (match) {
-          localStorage.setItem('fb_destination_id', match[1]); // Cache it
-          return match[1];
-        }
-      }
-
-      console.warn('FB destination ID not found, using empty string (story upload may fail)');
-    } catch (e) {
-      console.warn('Could not extract FB destination ID:', e);
-    }
-    return '';
-  },
-
   getInstagramAJAX() {
     // X-Instagram-AJAX is often in window._sharedData or generated from timestamp
     try {
@@ -293,7 +430,29 @@ const InstagramAPI = {
   },
 
 
-  async publishReshare(mediaId, background, width, height) {
+  async loadPostVideo(mediaId, source) {
+    if (source?.startsWith('https:') && !/[?&]byte(?:start|end)=/i.test(source)) {
+      try {
+        return await loadStoryMedia(source, true);
+      } catch {
+        // The playback URL can point to a segment rather than a complete MP4.
+      }
+    }
+
+    // Instagram can play a stream through a blob URL. Resolve its downloadable MP4 by post ID.
+    const response = await fetch(`https://www.instagram.com/api/v1/media/${mediaId}/info/`, {
+      credentials: 'include',
+      headers: { 'X-IG-App-ID': this.getAppId() },
+      signal: AbortSignal.timeout(10000)
+    });
+    if (!response.ok) throw new Error('Instagram no permitió obtener el vídeo original.');
+    const { items } = await response.json();
+    const video = items?.[0]?.video_versions?.find(version => version.url);
+    if (!video) throw new Error('Instagram no proporcionó un MP4 para esta publicación.');
+    return loadStoryMedia(video.url, true);
+  },
+
+  async publishReshare(mediaId, media, progress, video) {
     const csrfToken = this.getCSRFToken();
     if (!csrfToken) throw new Error('Inicia sesión en Instagram.');
 
@@ -306,28 +465,64 @@ const InstagramAPI = {
       'X-Web-Session-ID': this.getWebSessionID()
     };
 
-    await postToInstagram(`https://i.instagram.com/rupload_igphoto/${entityName}`, {
-      ...commonHeaders,
-      'Content-Type': 'image/jpeg',
-      'Offset': '0',
-      'X-Entity-Length': String(background.size),
-      'X-Entity-Name': entityName,
-      'X-Entity-Type': 'image/jpeg',
-      'X-Instagram-Rupload-Params': JSON.stringify({
-        media_type: 1,
-        upload_id: uploadId,
-        upload_media_height: height,
-        upload_media_width: width
-      })
-    }, background);
+    const upload = async (endpoint, asset, params, label) => {
+      const url = `https://i.instagram.com/${endpoint}/${entityName}`;
+      const headers = {
+        ...commonHeaders,
+        'Content-Type': asset.type,
+        'Offset': '0',
+        'X-Entity-Length': String(asset.size),
+        'X-Entity-Name': entityName,
+        'X-Entity-Type': asset.type,
+        'X-Instagram-Rupload-Params': JSON.stringify({ upload_id: uploadId, ...params })
+      };
+      try {
+        try {
+          return await postToInstagram(url, headers, asset);
+        } catch (error) {
+          if (error.status !== 572) throw error;
+        }
+        // Retry the same media entity once. This request does not publish the story.
+        progress(`Reintentando la subida de ${label}…`);
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        return await postToInstagram(url, headers, asset);
+      } catch (error) {
+        if (error.sessionInterrupted) throw error;
+        throw new Error(`Al subir ${label}: ${error.message}`, { cause: error });
+      }
+    };
+    const dimensions = {
+      upload_media_height: video?.height ?? 1920,
+      upload_media_width: video?.width ?? 1080
+    };
+    progress(video ? 'Subiendo el vídeo…' : 'Subiendo la imagen…');
+    if (video) {
+      await upload('rupload_igvideo', media, {
+        media_type: 2,
+        client_passthrough: '1',
+        is_sidecar: '0',
+        for_album: true,
+        is_unified_video: '0'
+      }, 'el vídeo');
+      progress('Subiendo la portada…');
+      await upload('rupload_igphoto', video.cover, { media_type: 2, ...dimensions }, 'la portada');
+    } else {
+      await upload('rupload_igphoto', media, { media_type: 1, ...dimensions }, 'la imagen');
+    }
 
     const body = new URLSearchParams({
       upload_id: uploadId,
       caption: '',
       configure_mode: '1',
+      ...(video && {
+        poster_frame_index: '0',
+        cover_upload_id: uploadId,
+        length: video.duration,
+        audio_muted: 'false',
+        source_type: '4',
+        extra: JSON.stringify({ source_width: video.width, source_height: video.height })
+      }),
       share_to_facebook: '',
-      share_to_fb_destination_id: this.getFBDestinationId(),
-      share_to_fb_destination_type: 'USER',
       jazoest: this.generateJazoest(this.getFbDtsg() || ''),
       story_sticker_ids: `media_simple_${mediaId}`,
       attached_media: JSON.stringify([{
@@ -341,48 +536,115 @@ const InstagramAPI = {
       }])
     });
     const claim = this.getIGWWWClaim();
-    const response = await postToInstagram('https://www.instagram.com/api/v1/media/configure_to_story/', {
+    const headers = {
       ...commonHeaders,
       'Content-Type': 'application/x-www-form-urlencoded',
       'X-CSRFToken': csrfToken,
       'X-Requested-With': 'XMLHttpRequest',
       ...(claim && { 'X-IG-WWW-Claim': claim })
-    }, body.toString());
-    if (response?.status !== 'ok') {
-      throw new Error(response?.message || 'Instagram no confirmó la publicación.');
-    }
+    };
+    const configureUrl = 'https://www.instagram.com/api/v1/media/configure_to_story/' +
+      (video ? '?video=1' : '');
+    const deadline = Date.now() + 180000;
+    progress(video ? 'Esperando a que Instagram procese el vídeo…' : 'Confirmando la historia…');
+    do {
+      try {
+        const response = await postToInstagram(configureUrl, headers, body.toString());
+        if (response?.status === 'ok') {
+          if (response.media?.id || response.media?.pk) return response.media;
+          throw new Error('Instagram respondió sin el identificador de la historia. Revisa tus historias antes de reintentar.');
+        }
+        throw new Error(instagramResponseMessage(response) || (response
+          ? 'Instagram devolvió una respuesta sin confirmación de la historia.'
+          : 'Instagram devolvió una respuesta vacía o inesperada. Revisa tus historias antes de reintentar.'));
+      } catch (error) {
+        if (error.sessionInterrupted) throw error;
+        const processing = error.status === 202 || /transcode not finished yet/i.test(error.message);
+        if (!video || !processing) {
+          const checkStory = error.status === 572 ? ' Revisa tus historias antes de reintentar.' : '';
+          throw new Error(`Al crear la historia: ${error.message}${checkStory}`, { cause: error });
+        }
+        if (Date.now() >= deadline) break;
+        await new Promise(resolve => setTimeout(resolve, 3000));
+      }
+    } while (Date.now() < deadline);
+    throw new Error('Instagram sigue procesando el vídeo.');
+
   }
 };
 
+function instagramResponseMessage(response) {
+  const message = [response?.message, response?.error_message, response?.error_type]
+    .find(value => typeof value === 'string' && value.trim());
+  return message?.trim().slice(0, 240);
+}
+
+function instagramSessionError(xhr, response, originalUser) {
+  const currentUser = document.cookie.match(/(?:^|;\s*)ds_user_id=(\d+)/)?.[1];
+  const action = [response?.message, response?.error_type, response?.error_message,
+    response?.redirect_url, xhr.responseURL].filter(value => typeof value === 'string').join(' ');
+  const verification = /challenge[_ /-]?required|checkpoint[_ /-]?required|\/(?:challenge|checkpoint)\//i.test(action);
+  const loginForm = /<form\b[^>]*\baction=["'][^"']*\/accounts\/login\//i.test(xhr.responseText || '');
+  if (!verification && xhr.status !== 401 && !(originalUser && currentUser !== originalUser) &&
+      !/login[_ -]?required|\/accounts\/login(?:[/?]|$)/i.test(action) && !loginForm) return null;
+
+  const error = new Error(verification
+    ? 'Instagram pidió verificar la cuenta. Completa la verificación en Instagram antes de volver a usar la extensión.'
+    : 'Instagram interrumpió la sesión. Vuelve a iniciar sesión en Instagram y comprueba tus historias antes de reintentar.');
+  error.sessionInterrupted = true;
+  return error;
+}
+
 function postToInstagram(url, headers, body) {
   return new Promise((resolve, reject) => {
+    const originalUser = document.cookie.match(/(?:^|;\s*)ds_user_id=(\d+)/)?.[1];
     const xhr = new XMLHttpRequest();
     xhr.open('POST', url);
     xhr.withCredentials = true;
-    xhr.responseType = 'json';
+    xhr.timeout = 45000;
     for (const [name, value] of Object.entries(headers)) {
       xhr.setRequestHeader(name, value);
     }
     xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        resolve(xhr.response);
+      let response;
+      try {
+        response = JSON.parse((xhr.responseText || '').trimStart().replace(/^for\s*\(;;\);\s*/, ''));
+      } catch {
+        // A redirect to an Instagram page can return HTML instead of JSON.
+      }
+      const sessionError = instagramSessionError(xhr, response, originalUser);
+      if (sessionError) {
+        reject(sessionError);
+        return;
+      }
+      if (xhr.status >= 200 && xhr.status < 300 && xhr.status !== 202) {
+        resolve(response);
       } else {
-        reject(new Error(xhr.response?.message || `Instagram respondió con HTTP ${xhr.status}.`));
+        const error = new Error(instagramResponseMessage(response) || `Instagram respondió con HTTP ${xhr.status}.`);
+        error.status = xhr.status;
+        reject(error);
       }
     };
-    xhr.onerror = () => reject(new Error('No se pudo conectar con Instagram.'));
+    xhr.onerror = () => reject(instagramSessionError(xhr, null, originalUser) ||
+      new Error('No se pudo conectar con Instagram.'));
+    xhr.ontimeout = () => reject(new Error('Instagram tardó demasiado en responder. Revisa tus historias antes de reintentar.'));
     xhr.send(body);
   });
 }
 
-addFeedStoryButtons();
+addStoryButtons();
 let scanScheduled = false;
-new MutationObserver(() => {
+function scheduleStoryButtonScan() {
   if (scanScheduled) return;
   scanScheduled = true;
   requestAnimationFrame(() => {
     scanScheduled = false;
-    addFeedStoryButtons();
+    addStoryButtons();
   });
-}).observe(document.body, { subtree: true, childList: true });
+}
+new MutationObserver(scheduleStoryButtonScan).observe(document.body, { subtree: true, childList: true });
+window.addEventListener('popstate', scheduleStoryButtonScan);
+window.addEventListener('scroll', () => {
+  if (getPostPermalink(location.pathname)) scheduleStoryButtonScan();
+}, { capture: true, passive: true });
 })();

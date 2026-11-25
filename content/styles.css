@@ -1,25 +1,30 @@
 .sharetostory-modal {
-  --sharetostory-dark: #080f0f;
-  --sharetostory-gray: #7e8287;
-  --sharetostory-orange: #ff7f11;
-  --sharetostory-red: #ff1b1c;
-  --sharetostory-dark-lighter: #111819;
-  --sharetostory-transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-}
+  --sharetostory-fallback-surface: 255, 255, 255;
+  --sharetostory-fallback-text: 38, 38, 38;
+  --sharetostory-fallback-divider: 219, 219, 219;
+  --sharetostory-fallback-link: 0, 55, 107;
+  --sharetostory-surface: rgb(var(--ig-elevated-background, var(--ig-primary-background, var(--sharetostory-fallback-surface))));
+  --sharetostory-text: rgb(var(--ig-primary-text, var(--sharetostory-fallback-text)));
+  --sharetostory-divider: rgb(var(--ig-separator, var(--sharetostory-fallback-divider)));
+  --sharetostory-link: rgb(var(--ig-link, var(--sharetostory-fallback-link)));
 
-.sharetostory-modal {
   position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background: rgba(8, 15, 15, 0.95);
-  backdrop-filter: blur(8px);
+  inset: 0;
+  background: rgba(0, 0, 0, 0.48);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 99999;
   animation: sharetostory-fade-in 0.2s ease;
+}
+
+@media (prefers-color-scheme: dark) {
+  .sharetostory-modal {
+    --sharetostory-fallback-surface: 38, 38, 38;
+    --sharetostory-fallback-text: 245, 245, 245;
+    --sharetostory-fallback-divider: 54, 54, 54;
+    --sharetostory-fallback-link: 224, 241, 255;
+  }
 }
 
 @keyframes sharetostory-fade-in {
@@ -28,8 +33,8 @@
 }
 
 .sharetostory-modal-content {
-  background: var(--sharetostory-dark);
-  border: 2px solid var(--sharetostory-gray);
+  background: var(--sharetostory-surface);
+  color: var(--sharetostory-text);
   border-radius: 16px;
   width: 90%;
   max-width: 600px;
@@ -38,7 +43,7 @@
   display: flex;
   flex-direction: column;
   animation: sharetostory-slide-up 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.22);
 }
 
 @keyframes sharetostory-slide-up {
@@ -57,24 +62,23 @@
   justify-content: space-between;
   align-items: center;
   padding: 20px 24px;
-  border-bottom: 2px solid var(--sharetostory-gray);
-  background: var(--sharetostory-dark-lighter);
+  border-bottom: 1px solid var(--sharetostory-divider);
 }
 
 .sharetostory-modal-header h2 {
   margin: 0;
   font-size: 20px;
   font-weight: 600;
-  color: white;
+  color: inherit;
   letter-spacing: -0.3px;
 }
 
 .sharetostory-close-btn {
   background: transparent;
-  border: 2px solid var(--sharetostory-red);
+  border: 0;
   font-size: 24px;
   line-height: 1;
-  color: var(--sharetostory-red);
+  color: inherit;
   cursor: pointer;
   padding: 4px;
   width: 32px;
@@ -82,24 +86,20 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: var(--sharetostory-transition);
+  transition: opacity 150ms ease;
   border-radius: 8px;
 }
 
-.sharetostory-close-btn:hover {
-  background: var(--sharetostory-red);
-  color: white;
-  transform: rotate(90deg);
+.sharetostory-close-btn:enabled:hover {
+  opacity: 0.65;
 }
 
 .sharetostory-modal-body {
   padding: 24px;
   overflow-y: auto;
   flex: 1;
-  color: white;
 }
 
-/* Upload Area */
 .sharetostory-actions {
   display: flex;
   gap: 12px;
@@ -114,25 +114,18 @@
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
-  transition: var(--sharetostory-transition);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-}
-
-.sharetostory-btn-primary {
-  background: var(--sharetostory-orange);
+  transition: filter 150ms ease;
+  background: rgb(var(--ig-primary-button, 0, 103, 190));
   color: white;
-  border: 2px solid var(--sharetostory-orange);
 }
 
-.sharetostory-btn-primary:hover {
-  background: #ff8c2e;
-  border-color: #ff8c2e;
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(255, 127, 17, 0.4);
+.sharetostory-btn-primary:disabled {
+  opacity: 0.55;
+  cursor: default;
 }
 
-.sharetostory-btn-primary:active {
-  transform: translateY(0);
+.sharetostory-btn-primary:enabled:hover {
+  filter: brightness(0.9);
 }
 
 .sharetostory-share-story {
@@ -150,8 +143,36 @@
 .sharetostory-share-story svg {
   display: block;
   color: inherit;
+  transition: opacity 150ms ease, transform 150ms ease;
+}
+
+@media (hover: hover) {
+  .sharetostory-share-story:hover svg {
+    opacity: 0.72;
+    transform: scale(1.08);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sharetostory-share-story svg {
+    transition: none;
+  }
+
+  .sharetostory-share-story:hover svg {
+    transform: none;
+  }
 }
 
 .sharetostory-reshare-source {
-  color: #b4d8ff;
+  color: var(--sharetostory-link);
+}
+
+.sharetostory-reshare-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.sharetostory-upload-preview[hidden] {
+  display: none;
 }
