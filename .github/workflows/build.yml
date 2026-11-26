@@ -1,0 +1,111 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      package: ${{ steps.package.outputs.package }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Check JavaScript syntax
+        run: |
+          for file in content/*.js content/*.mjs background/*.js vendor/*.mjs; do
+            node --check "$file"
+          done
+
+      - name: Validate and package the extension
+        id: package
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          from zipfile import ZIP_DEFLATED, ZipFile
+
+          manifest = json.loads(Path("manifest.json").read_text())
+          version = manifest["version"]
+          if os.environ["GITHUB_REF_TYPE"] == "tag" and os.environ["GITHUB_REF_NAME"] != f"v{version}":
+              raise SystemExit(f"Release tag must match the manifest version: v{version}")
+
+          resources = [
+              manifest["background"]["service_worker"],
+              *manifest["icons"].values(),
+              *(path for script in manifest["content_scripts"] for kind in ("js", "css") for path in script.get(kind, [])),
+              *(path for entry in manifest["web_accessible_resources"] for path in entry["resources"]),
+          ]
+          files = [Path("manifest.json"), Path("LICENSE")]
+          for directory in ("_locales", "background", "content", "icons", "vendor"):
+              files.extend(
+                  path for path in Path(directory).rglob("*")
+                  if path.is_file() and not path.is_symlink() and not any(part.startswith(".") for part in path.parts)
+              )
+          missing = set(map(Path, resources)) - set(files)
+          if missing:
+              raise SystemExit(f"Missing extension resources: {', '.join(map(str, sorted(missing)))}")
+
+          locale_files = sorted(Path("_locales").glob("*/messages.json"))
+          default_locale = Path("_locales") / manifest["default_locale"] / "messages.json"
+          if default_locale not in locale_files:
+              raise SystemExit("Missing default locale")
+          for path in locale_files:
+              messages = json.loads(path.read_text())
+              if not messages["extensionDescription"]["message"]:
+                  raise SystemExit(f"Missing extension description in {path}")
+
+          package = f"sharetostory-{version}.zip"
+          Path("dist").mkdir(exist_ok=True)
+          archive = Path("dist") / package
+          with ZipFile(archive, "w", compression=ZIP_DEFLATED) as zip_file:
+              for path in sorted(files):
+                  zip_file.write(path, path.as_posix())
+          with ZipFile(archive) as zip_file:
+              if zip_file.testzip() is not None:
+                  raise SystemExit("The extension ZIP is corrupt")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              print(f"package={package}", file=output)
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sharetostory-extension
+          path: dist/${{ steps.package.outputs.package }}
+          if-no-files-found: error
+
+  release:
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: sharetostory-extension
+          path: dist
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          PACKAGE: ${{ needs.build.outputs.package }}
+        run: gh release create "$RELEASE_TAG" "dist/$PACKAGE" --verify-tag --generate-notes

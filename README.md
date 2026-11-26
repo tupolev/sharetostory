@@ -1,5 +1,7 @@
 # ShareToStory
 
+[![Build status](https://github.com/tupolev/sharetostory/actions/workflows/build.yml/badge.svg?branch=main&event=push)](https://github.com/tupolev/sharetostory/actions/workflows/build.yml)
+
 [English](#english) · [Español](#español)
 
 ## English
