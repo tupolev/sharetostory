@@ -4,36 +4,34 @@ chrome.runtime.onMessage.addListener((request, sender, respond) => {
   if (request?.type !== 'SHARETOSTORY_PREVIEW_REQUEST' ||
       sender.origin !== 'https://www.instagram.com' || !sender.tab) return;
 
-  loadStoryMedia(request.url, request.video === true, request.audio === true).then(
+  loadStoryMedia(request.url, request.video === true).then(
     data => respond({ data }),
-    error => respond({ error: error.message })
+    error => respond({ errorCode: error.message || 'prepare_failed' })
   );
   return true;
 });
 
-async function loadStoryMedia(source, video, audio) {
+async function loadStoryMedia(source, video) {
   const url = new URL(source);
   if (url.protocol !== 'https:' || url.username || url.password || url.port ||
       !/(^|\.)(cdninstagram\.com|fbcdn\.net)$/.test(url.hostname)) {
-    throw new Error('Instagram no proporcionó una dirección multimedia compatible.');
+    throw new Error('unsupported_media_url');
   }
 
   const response = await fetch(url, {
     credentials: 'omit',
     redirect: 'error',
-    signal: AbortSignal.timeout(video || audio ? 25000 : 10000)
+    signal: AbortSignal.timeout(video ? 25000 : 10000)
   });
   const type = response.headers.get('Content-Type') || '';
-  if (video || audio) {
-    const format = audio ? /^(audio\/mp4|video\/mp4|application\/octet-stream)(?:;|$)/i
-      : /^(video\/mp4|application\/octet-stream)(?:;|$)/i;
-    if (!response.ok || response.status !== 200 || !format.test(type)) {
-      throw new Error(audio ? 'No se pudo descargar la pista de audio.' : 'No se pudo descargar el vídeo MP4 completo.');
+  if (video) {
+    if (!response.ok || response.status !== 200 || !/^(video\/mp4|application\/octet-stream)(?:;|$)/i.test(type)) {
+      throw new Error('video_download_failed');
     }
     return encodeMedia(await readVideo(response));
   }
   if (!response.ok || !/^image\/(jpeg|png|webp|avif)(?:;|$)/i.test(type)) {
-    throw new Error('No se pudo descargar la imagen del post.');
+    throw new Error('image_download_failed');
   }
 
   return encodeMedia(await makeStoryPreview(await response.blob()));
@@ -42,7 +40,7 @@ async function loadStoryMedia(source, video, audio) {
 async function readVideo(response) {
   // Chrome extension messaging serializes the binary payload as base64.
   const limit = 40 * 1024 * 1024;
-  const tooLarge = () => new Error('El vídeo supera el límite de 40 MB de la extensión.');
+  const tooLarge = () => new Error('file_too_large');
   if (Number(response.headers.get('Content-Length')) > limit) throw tooLarge();
   const reader = response.body.getReader();
   const chunks = [];
@@ -62,7 +60,7 @@ async function readVideo(response) {
   const video = new Blob(chunks, { type: 'video/mp4' });
   const header = new Uint8Array(await video.slice(4, 8).arrayBuffer());
   if (String.fromCharCode(...header) !== 'ftyp') {
-    throw new Error('Instagram no proporcionó un archivo MP4 compatible.');
+    throw new Error('invalid_mp4');
   }
   return video;
 }

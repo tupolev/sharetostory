@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "ShareToStory",
-  "version": "1.0.1",
-  "description": "Comparte posts, reels e historias de Instagram en tus historias.",
+  "version": "1.0.3",
+  "description": "__MSG_extensionDescription__",
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
@@ -23,16 +23,7 @@
         "https://www.instagram.com/*"
       ],
       "js": [
-        "content/story-viewer.js"
-      ],
-      "run_at": "document_start",
-      "world": "MAIN"
-    },
-    {
-      "matches": [
-        "https://www.instagram.com/*"
-      ],
-      "js": [
+        "content/messages.js",
         "content/inject.js"
       ],
       "css": [
@@ -60,5 +51,6 @@
         "https://www.instagram.com/*"
       ]
     }
-  ]
+  ],
+  "default_locale": "en"
 }
