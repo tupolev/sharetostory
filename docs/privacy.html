@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="How the ShareToStory Chrome extension handles Instagram content and session data.">
+  <title>ShareToStory Privacy Policy</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      box-sizing: border-box;
+      max-width: 72ch;
+      margin: 0 auto;
+      padding: clamp(1.25rem, 5vw, 3rem);
+      font: 1rem / 1.65 system-ui, sans-serif;
+    }
+    h1, h2 { line-height: 1.2; }
+    h2 { margin-top: 2rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>ShareToStory Privacy Policy</h1>
+    <p>ShareToStory is an independent Chrome extension for sharing selected Instagram photos, videos and reels to your own Instagram Story. This policy explains how the extension handles data.</p>
+
+    <h2>Data the extension uses</h2>
+    <ul>
+      <li><strong>Instagram page and post data.</strong> The extension reads the Instagram page to place its share button next to eligible posts. It uses the selected post’s identifier, link and media URLs to show the original post, obtain the selected media and reference the original in the Story.</li>
+      <li><strong>Selected media.</strong> The extension processes the selected photo or video in Chrome. For videos and reels, it also processes available audio and generates a cover image for the upload.</li>
+      <li><strong>Instagram account and session data.</strong> The extension uses your existing Instagram browser session, including cookies and session values needed for authenticated requests. It reads the Instagram account identifier to detect a change of account during publication. You sign in directly on Instagram. ShareToStory does not ask for or read your Instagram password.</li>
+    </ul>
+
+    <h2>Where data goes</h2>
+    <p>ShareToStory retrieves selected media from Instagram’s media delivery domains, including <code>cdninstagram.com</code> and <code>fbcdn.net</code>. After you choose <strong>Publish story</strong>, the extension uses your Instagram session to send the prepared media and information about the original post and upload to Instagram over HTTPS. Instagram handles the resulting Story according to its own settings and <a href="https://privacycenter.instagram.com/policy/">privacy policy</a>.</p>
+    <p>The extension does not send these data to the developer, use them for advertising or analytics, or sell them. Its use of data received from Chrome APIs follows the <a href="https://developer.chrome.com/docs/webstore/program-policies/limited-use">Chrome Web Store Limited Use requirements</a>.</p>
+
+    <h2>Storage and user controls</h2>
+    <p>The extension holds media and request data in browser memory while preparing and publishing a Story. It does not keep its own history of posts or copies of Instagram session data. If you choose to download a prepared MP4, Chrome saves it to your device according to your download settings. You can delete that file locally and manage published Stories through Instagram.</p>
+    <p>You can disable or remove ShareToStory from Chrome’s Extensions page to stop it from accessing Instagram pages.</p>
+
+    <h2>Contact</h2>
+    <p>For privacy questions, use the <a href="https://github.com/tupolev/sharetostory/issues">ShareToStory GitHub issue tracker</a>. Issues are public. Keep account details, session information and private media out of your message.</p>
+  </main>
+</body>
+</html>
